@@ -17,6 +17,11 @@ distilGPT-2 via teacher forcing, which lets us compute the formula exactly.
 ``token_perplexity`` is a pure implementation of the equation and is the part
 under test; the distilGPT-2 forward pass merely supplies the log-probabilities.
 The scorer is injectable so tests run without the model.
+
+Known limitation: perplexity separates generic AI *prose* from human writing
+well, but creative/rhyming AI *poetry* can be high-perplexity (surprising word
+choices) and read as human here. That is why this is one of three signals --
+the LLM vibe check reliably catches AI poems that perplexity misses.
 """
 
 from __future__ import annotations
@@ -33,8 +38,8 @@ DEFAULT_MODEL = "distilgpt2"
 # AI-score mapping thresholds, in *log*-perplexity space (perplexity is roughly
 # log-normal, so log space linearises the mapping). Calibrated against labeled
 # human/AI samples: human log-PPL ran high, AI ran low.
-_LOG_PPL_HUMAN = 4.7  # >= this (PPL ~110) => confidently human (score 0.0)
-_LOG_PPL_AI = 3.3     # <= this (PPL ~27)  => confidently AI    (score 1.0)
+_LOG_PPL_HUMAN = 4.1  # >= this (PPL ~60) => confidently human (score 0.0)
+_LOG_PPL_AI = 3.2     # <= this (PPL ~25) => confidently AI    (score 1.0)
 
 # Reliability ramp by token count: too few tokens => unreliable => held neutral.
 _REL_FLOOR_TOKENS = 10

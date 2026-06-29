@@ -23,6 +23,7 @@ from flask import Flask, jsonify, request
 
 from provenanceguard import audit
 from provenanceguard.signals.llm_classifier import classify_with_llm
+from provenanceguard.signals.perplexity import analyze_perplexity
 from provenanceguard.signals.stylometric import analyze_stylometry
 
 load_dotenv()
@@ -33,12 +34,14 @@ app = Flask(__name__)
 def _run_pipeline(text: str) -> Dict[str, Any]:
     """Run the available detection signals over ``text``.
 
-    TODO(M4): add the perplexity signal and combine via the real confidence
-    scorer. For now Signals 1 (LLM) and 2 (stylometric) run and are averaged.
+    TODO(M4): combine the three signals via the real confidence scorer. For
+    now Signals 1 (LLM), 2 (stylometric), and 3 (perplexity) run and are
+    averaged.
     """
     llm = classify_with_llm(text)
     stylo = analyze_stylometry(text)
-    signals = [llm, stylo]
+    ppl = analyze_perplexity(text)
+    signals = [llm, stylo, ppl]
 
     # TODO(M4): real confidence scorer. Placeholder = mean of signal scores.
     confidence = sum(s.score for s in signals) / len(signals)
@@ -47,6 +50,7 @@ def _run_pipeline(text: str) -> Dict[str, Any]:
         "confidence": confidence,
         "llm_score": llm.score,
         "stylometric_score": stylo.score,
+        "perplexity_score": ppl.score,
         # attribution reflects Signal 1 specifically, per the spec.
         "attribution": _attribution(llm.score),
         # TODO(M5): real transparency-label engine per planning.md thresholds.
@@ -99,6 +103,7 @@ def submit():
         "confidence": result["confidence"],
         "llm_score": result["llm_score"],
         "stylometric_score": result["stylometric_score"],
+        "perplexity_score": result["perplexity_score"],
         "label": result["label"],
         "signals": result["signals"],
         "status": "classified",

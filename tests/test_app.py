@@ -24,6 +24,11 @@ def client(monkeypatch, tmp_path):
         "analyze_stylometry",
         lambda text, **kw: SignalResult(name="stylometric", score=0.85, reasoning="stub"),
     )
+    monkeypatch.setattr(
+        app_module,
+        "analyze_perplexity",
+        lambda text, **kw: SignalResult(name="perplexity", score=0.85, reasoning="stub"),
+    )
     # Redirect the audit log to an isolated temp file.
     monkeypatch.setenv("PROVENANCEGUARD_AUDIT_LOG", str(tmp_path / "audit.jsonl"))
     app_module.app.config.update(TESTING=True)

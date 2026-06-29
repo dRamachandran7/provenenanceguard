@@ -10,6 +10,7 @@ Public API:
 
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any, Dict
 
@@ -174,4 +175,6 @@ def get_log():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # macOS AirPlay Receiver occupies port 5000; default to 5001.
+    port = int(os.environ.get("PORT", 5001))
+    app.run(debug=True, port=port)

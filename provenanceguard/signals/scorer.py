@@ -19,9 +19,9 @@ from provenanceguard.signals import SignalResult
 
 # Weights reflecting planning.md guidance: deterministic signals > LLM judge.
 _BASE_WEIGHTS: dict[str, float] = {
-    "llm_classifier": 0.30,
+    "llm_classifier": 0.365,
     "stylometric": 0.375,
-    "perplexity": 0.375,
+    "perplexity": 0.275,
 }
 
 

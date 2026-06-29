@@ -28,7 +28,7 @@ These are the signals that will be used to detect if a post is authentic or not:
 
 2. **Stylometric heuristics:** we will use measurable statistical properties, such as sentence length variance, type-token ratio, punctuation density or average sentence complexity. We will use pure python to compute the necessary quantities and evaluate if it is likely AI-generated. Human writing is more variable, whereas AI text tends to be more uniform.
 
-3. **Perplexity:** we will once again use the groq api in an llm-as-a-judge approach to measure perplexity: how "surprised" an llm is by the next token. If it is predictable, or not as surprising, it is likely AI generated.
+3. **Perplexity:** we can calculate the perplexity, or how predictable the next token given the previous ones are, through a mathematical formula. If the tokens are less predictable, it is likely to be human. Groq is not capable of giving that probability, so we will need to load a local distilGPT-2 to do that.
 
 ## Uncertaincy Representation
 

@@ -30,6 +30,10 @@ These are the signals that will be used to detect if a post is authentic or not:
 
 3. **Perplexity:** we can calculate the perplexity, or how predictable the next token given the previous ones are, through a mathematical formula. If the tokens are less predictable, it is likely to be human. Groq is not capable of giving that probability, so we will need to load a local distilGPT-2 to do that.
 
+## Confidence Scoring
+
+Each signal should produce its own score, and all 3 should be combined into one, final confidence score which will be used. As for weighting, stylometric heuristics and perplexity should be emphasized over the llm-as-a-judge result, as it is more determinisitic.
+
 ## Uncertaincy Representation
 
 After combining the scores from the detection signals, we should have an overall score ranging from 0.0 (definitely human) to 1.0 (definitely AI).

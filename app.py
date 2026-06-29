@@ -1,4 +1,4 @@
-"""ProvenanceGuard Flask application (skeleton).
+"""ProvenanceGuard Flask application.
 
 Public API:
 
@@ -6,11 +6,6 @@ Public API:
     POST /submit_text  -> alias of /submit (planning.md name)
     POST /appeal       -> file an appeal against a prior decision
     GET  /log          -> view the structured audit log
-
-Signals 1 (LLM vibe check) and 2 (stylometric) are implemented. The real
-confidence scorer, Signal 3 (perplexity), the transparency-label engine, and
-the full appeals review queue are stubbed and marked TODO for upcoming
-milestones.
 """
 
 from __future__ import annotations
@@ -24,6 +19,7 @@ from flask import Flask, jsonify, request
 from provenanceguard import audit
 from provenanceguard.signals.llm_classifier import classify_with_llm
 from provenanceguard.signals.perplexity import analyze_perplexity
+from provenanceguard.signals.scorer import combine as combine_signals
 from provenanceguard.signals.stylometric import analyze_stylometry
 
 load_dotenv()
@@ -32,19 +28,13 @@ app = Flask(__name__)
 
 
 def _run_pipeline(text: str) -> Dict[str, Any]:
-    """Run the available detection signals over ``text``.
-
-    TODO(M4): combine the three signals via the real confidence scorer. For
-    now Signals 1 (LLM), 2 (stylometric), and 3 (perplexity) run and are
-    averaged.
-    """
+    """Run all three detection signals and combine into a confidence score."""
     llm = classify_with_llm(text)
     stylo = analyze_stylometry(text)
     ppl = analyze_perplexity(text)
     signals = [llm, stylo, ppl]
 
-    # TODO(M4): real confidence scorer. Placeholder = mean of signal scores.
-    confidence = sum(s.score for s in signals) / len(signals)
+    confidence = combine_signals(signals)
 
     return {
         "confidence": confidence,

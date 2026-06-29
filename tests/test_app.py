@@ -31,7 +31,7 @@ def client(monkeypatch, tmp_path):
     )
     # Redirect the audit log to an isolated temp file.
     monkeypatch.setenv("PROVENANCEGUARD_AUDIT_LOG", str(tmp_path / "audit.jsonl"))
-    app_module.app.config.update(TESTING=True)
+    app_module.app.config.update(TESTING=True, RATELIMIT_ENABLED=False)
     return app_module.app.test_client()
 
 
@@ -49,7 +49,30 @@ def test_submit_returns_decision_with_required_fields(client):
     assert body["attribution"] == "likely_ai"  # llm score 0.85 -> likely_ai
     assert body["confidence"] == pytest.approx(0.85)
     assert body["label"] == "ai-generated"
+    assert body["label_text"]  # present and non-empty
     assert body["signals"][0]["name"] == "llm_classifier"
+
+
+def test_label_text_varies_with_confidence(client):
+    # All signals stubbed to 0.85 -> high-confidence AI label text.
+    body = _submit(client).get_json()
+    assert "strongly" in body["label_text"]
+
+    # Patch signals to low-confidence human scores.
+    import app as app_module
+    from provenanceguard.signals import SignalResult
+    with client.application.test_request_context():
+        pass
+    import unittest.mock as mock
+    with mock.patch.object(app_module, "classify_with_llm",
+                           return_value=SignalResult(name="llm_classifier", score=0.1, reasoning="")), \
+         mock.patch.object(app_module, "analyze_stylometry",
+                           return_value=SignalResult(name="stylometric", score=0.1, reasoning="")), \
+         mock.patch.object(app_module, "analyze_perplexity",
+                           return_value=SignalResult(name="perplexity", score=0.1, reasoning="")):
+        resp2 = _submit(client, text="i wrote this myself")
+    assert resp2.get_json()["label"] == "human"
+    assert resp2.get_json()["label_text"]
 
 
 def test_submit_text_alias_works(client):
@@ -81,6 +104,7 @@ def test_submission_is_written_to_structured_log(client):
         "attribution",
         "confidence",
         "llm_score",
+        "label_text",
         "status",
     ):
         assert field in e, f"missing {field}"
@@ -96,20 +120,26 @@ def test_content_id_links_submission_to_log(client):
 
 def test_appeal_logs_event_and_updates_status(client):
     content_id = _submit(client).get_json()["content_id"]
-    resp = client.post("/appeal", json={"content_id": content_id, "reason": "I wrote this!"})
+    resp = client.post(
+        "/appeal",
+        json={"content_id": content_id, "creator_reasoning": "I wrote this!"},
+    )
     assert resp.status_code == 200
-    assert resp.get_json()["status"] == "under_review"
+    body = resp.get_json()
+    assert body["status"] == "under_review"
+    assert body["queued_for_review"] is True  # label was ai-generated
 
     entries = client.get("/log").get_json()["entries"]
     appeal_entry = entries[-1]
     assert appeal_entry["event"] == "appeal"
     assert appeal_entry["content_id"] == content_id
-    assert appeal_entry["reason"] == "I wrote this!"
+    assert appeal_entry["creator_reasoning"] == "I wrote this!"
     assert appeal_entry["previous_label"] == "ai-generated"
+    assert appeal_entry["queued_for_review"] is True
 
 
 def test_appeal_unknown_content_id_returns_404(client):
-    resp = client.post("/appeal", json={"content_id": "nope", "reason": "x"})
+    resp = client.post("/appeal", json={"content_id": "nope", "creator_reasoning": "x"})
     assert resp.status_code == 404
 
 

@@ -14,43 +14,63 @@ import uuid
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, current_app, jsonify, request
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from provenanceguard import audit
 from provenanceguard.signals.llm_classifier import classify_with_llm
 from provenanceguard.signals.perplexity import analyze_perplexity
 from provenanceguard.signals.scorer import combine as combine_signals
 from provenanceguard.signals.stylometric import analyze_stylometry
+from provenanceguard.transparency import label_result
 
 load_dotenv()
 
 app = Flask(__name__)
 
+# Rate limiting: 10 submissions per minute and 50 per hour per IP address.
+# The minute limit absorbs normal interactive bursts; the hourly cap prevents
+# sustained automated submissions without blocking any realistic human use.
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri="memory://",
+    default_limits=[],
+)
+
+
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    return (
+        jsonify({"error": "Rate limit exceeded. Please slow down your submission rate."}),
+        429,
+    )
+
 
 def _run_pipeline(text: str) -> Dict[str, Any]:
-    """Run all three detection signals and combine into a confidence score."""
+    """Run all three detection signals and produce a labelled decision."""
     llm = classify_with_llm(text)
     stylo = analyze_stylometry(text)
     ppl = analyze_perplexity(text)
     signals = [llm, stylo, ppl]
 
     confidence = combine_signals(signals)
+    labelling = label_result(confidence)
 
     return {
         "confidence": confidence,
         "llm_score": llm.score,
         "stylometric_score": stylo.score,
         "perplexity_score": ppl.score,
-        # attribution reflects Signal 1 specifically, per the spec.
         "attribution": _attribution(llm.score),
-        # TODO(M5): real transparency-label engine per planning.md thresholds.
-        "label": _placeholder_label(confidence),
+        "label": labelling["label"],
+        "label_text": labelling["label_text"],
         "signals": [s.to_dict() for s in signals],
     }
 
 
 def _attribution(llm_score: float) -> str:
-    """Map Signal 1's score to a coarse attribution result."""
     if llm_score >= 0.6:
         return "likely_ai"
     if llm_score <= 0.4:
@@ -58,17 +78,9 @@ def _attribution(llm_score: float) -> str:
     return "uncertain"
 
 
-def _placeholder_label(confidence: float) -> str:
-    """Temporary label mapping; replaced by the label engine in M5."""
-    if confidence < 0.4:
-        return "human"
-    if confidence < 0.6:
-        return "uncertain"
-    return "ai-generated"
-
-
 @app.post("/submit")
 @app.post("/submit_text")
+@limiter.limit("10 per minute; 50 per hour", exempt_when=lambda: current_app.testing)
 def submit():
     """Accept content for attribution analysis and return the decision."""
     payload = request.get_json(silent=True) or {}
@@ -83,22 +95,24 @@ def submit():
     result = _run_pipeline(text)
     content_id = str(uuid.uuid4())
 
-    entry = {
-        "event": "submission",
-        "content_id": content_id,
-        "creator_id": creator_id,
-        "timestamp": audit.now_iso(),
-        "text": text,
-        "attribution": result["attribution"],
-        "confidence": result["confidence"],
-        "llm_score": result["llm_score"],
-        "stylometric_score": result["stylometric_score"],
-        "perplexity_score": result["perplexity_score"],
-        "label": result["label"],
-        "signals": result["signals"],
-        "status": "classified",
-    }
-    audit.append(entry)
+    audit.append(
+        {
+            "event": "submission",
+            "content_id": content_id,
+            "creator_id": creator_id,
+            "timestamp": audit.now_iso(),
+            "text": text,
+            "attribution": result["attribution"],
+            "confidence": result["confidence"],
+            "llm_score": result["llm_score"],
+            "stylometric_score": result["stylometric_score"],
+            "perplexity_score": result["perplexity_score"],
+            "label": result["label"],
+            "label_text": result["label_text"],
+            "signals": result["signals"],
+            "status": "classified",
+        }
+    )
 
     return jsonify(
         {
@@ -108,6 +122,7 @@ def submit():
             "attribution": result["attribution"],
             "confidence": result["confidence"],
             "label": result["label"],
+            "label_text": result["label_text"],
             "signals": result["signals"],
         }
     )
@@ -115,30 +130,40 @@ def submit():
 
 @app.post("/appeal")
 def appeal():
-    """File an appeal against a prior decision. TODO(M5): full review queue."""
+    """File an appeal against a prior decision."""
     payload = request.get_json(silent=True) or {}
     content_id = payload.get("content_id")
-    reason = payload.get("reason", "")
+    creator_reasoning = payload.get("creator_reasoning", "")
 
     original = audit.find_submission(content_id) if content_id else None
     if original is None:
         return jsonify({"error": "Unknown content_id."}), 404
-    if not reason.strip():
-        return jsonify({"error": "Field 'reason' is required."}), 400
+    if not creator_reasoning.strip():
+        return jsonify({"error": "Field 'creator_reasoning' is required."}), 400
 
-    # TODO(M5): push to human review queue when label is ai-generated/uncertain.
+    previous_label = original.get("label")
+    # Content flagged as ai-generated or uncertain is queued for human review.
+    queued = previous_label in ("ai-generated", "uncertain")
+
     audit.append(
         {
             "event": "appeal",
             "content_id": content_id,
             "creator_id": original.get("creator_id"),
             "timestamp": audit.now_iso(),
-            "reason": reason,
-            "previous_label": original.get("label"),
+            "creator_reasoning": creator_reasoning,
+            "previous_label": previous_label,
+            "queued_for_review": queued,
             "status": "under_review",
         }
     )
-    return jsonify({"status": "under_review", "content_id": content_id})
+    return jsonify(
+        {
+            "status": "under_review",
+            "content_id": content_id,
+            "queued_for_review": queued,
+        }
+    )
 
 
 @app.get("/log")
